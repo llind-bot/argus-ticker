@@ -75,3 +75,16 @@ def test_not_frozen_cannot_self_update():
     assert not selfupdate.can_self_update()
     with pytest.raises(selfupdate.UpdateError):
         selfupdate.install("x", lambda d, t: True, sha256="00" * 32)
+
+
+def test_windows_version_resource_names_the_app():
+    import ast
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "version_info", Path(__file__).resolve().parent.parent / "packaging" / "version_info.py")
+    vi = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vi)
+    text = vi.render("0.6.1")
+    assert "StringStruct('FileDescription', 'Argus Ticker')" in text and "filevers=(0, 6, 1, 0)" in text
+    ast.parse(text)                                   # PyInstaller evals it as Python

@@ -31,9 +31,9 @@ jobs:
           v=$(python -c "import ticker; print(ticker.__version__)")
           [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != ticker.__version__ $v"; exit 1; }
       - name: Build ArgusTicker.exe
-        run: >
-          pyinstaller --noconfirm --onefile --windowed --name ArgusTicker
-          --collect-submodules keyring.backends --collect-data tzdata run_ticker.py
+        run: |
+          python packaging/version_info.py build/version_info.txt
+          pyinstaller --noconfirm --onefile --windowed --name ArgusTicker --version-file build/version_info.txt --collect-submodules keyring.backends --collect-data tzdata run_ticker.py
       - uses: actions/upload-artifact@v4
         with:
           name: ArgusTicker-windows

@@ -19,6 +19,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName("Argus")
     app.setApplicationName("ArgusTicker")
+    app.setApplicationDisplayName("Argus Ticker")
     app.setQuitOnLastWindowClosed(False)              # the widget/strip can run without the main window
     theme.apply_dark_palette(app)
     try:
