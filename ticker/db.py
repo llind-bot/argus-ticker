@@ -10,7 +10,11 @@ from typing import Optional
 
 from .models import KINDS, Entry
 
-SCHEMA = """
+# Each step upgrades the database by one version (PRAGMA user_version). Never edit a
+# released step — append a new one. Step 1 is the original schema (IF NOT EXISTS, so
+# databases made by 0.1.0, which have user_version 0, pass through it unchanged).
+MIGRATIONS: list[str] = [
+    """
 CREATE TABLE IF NOT EXISTS entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL,
@@ -21,7 +25,8 @@ CREATE TABLE IF NOT EXISTS entries (
     alert_below REAL,
     sort INTEGER NOT NULL DEFAULT 0,
     UNIQUE (symbol, kind));
-"""
+""",
+]
 _COLS = "id, symbol, kind, name, notes, alert_above, alert_below, sort"
 
 
@@ -39,10 +44,44 @@ class DuplicateEntry(ValueError):
     pass
 
 
+class NewerDatabase(RuntimeError):
+    pass
+
+
+def migrate(conn: sqlite3.Connection, migrations: list[str] = MIGRATIONS) -> int:
+    """Bring the database up to date; returns its version. Each step is all-or-nothing.
+
+    Steps are split on ';', so a step must not contain ';' inside a string or trigger."""
+    conn.commit()
+    level, conn.isolation_level = conn.isolation_level, None   # explicit BEGIN/COMMIT below
+    try:
+        return _migrate(conn, migrations)
+    finally:
+        conn.isolation_level = level
+
+
+def _migrate(conn: sqlite3.Connection, migrations: list[str]) -> int:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version > len(migrations):
+        raise NewerDatabase(f"This watchlist was saved by a newer version of Argus Ticker "
+                            f"(database v{version}, this app knows v{len(migrations)}). Please update the app.")
+    for v in range(version, len(migrations)):
+        try:
+            conn.execute("BEGIN")
+            for stmt in filter(str.strip, migrations[v].split(";")):
+                conn.execute(stmt)
+            conn.execute(f"PRAGMA user_version = {v + 1}")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    return len(migrations)
+
+
 class Store:
     def __init__(self, path: Path | str):
         self.conn = sqlite3.connect(str(path))
-        self.conn.executescript(SCHEMA)
+        migrate(self.conn)
 
     def close(self) -> None:
         self.conn.close()

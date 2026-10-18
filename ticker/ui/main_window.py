@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QMainWindow, QMenu,
-                               QMessageBox, QSystemTrayIcon, QTableView, QToolBar)
+import threading
+from datetime import datetime
+from pathlib import Path
 
-from .. import settings
-from ..db import DuplicateEntry, Store
+from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap
+from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHeaderView, QLabel, QMainWindow,
+                               QMenu, QMessageBox, QSystemTrayIcon, QTableView, QToolBar)
+
+from .. import __version__, market, settings, transfer, updates
+from ..db import DuplicateEntry, Store, default_path
 from ..format import AlertTracker
 from ..quotes import QuoteService
 from .dialogs import EntryDialog, SettingsDialog
@@ -32,13 +36,21 @@ def app_icon() -> QIcon:
     return QIcon(pix)
 
 
+class _UpdateChecker(QObject):
+    done = Signal(object, bool)                  # UpdateInfo | None, asked by the user
+
+    def start(self, manual: bool) -> None:
+        threading.Thread(target=lambda: self.done.emit(updates.check(), manual), daemon=True).start()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, store: Store):
         super().__init__()
         self.store = store
         self.prefs = settings.load_prefs()
         self.alerts = AlertTracker()
-        self.setWindowTitle("Argus Ticker")
+        self.setWindowTitle(f"Argus Ticker {__version__}")
+        self.market = market.estimate()
         self.setWindowIcon(app_icon())
         self.resize(820, 420)
 
@@ -58,6 +70,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.table)
 
         self._build_actions()
+        self._build_menus()
+        self.market_label = QLabel()
+        self.statusBar().addWidget(self.market_label)
         self.status_labels = {name: QLabel(f"{name}: idle") for name in ("Alpaca", "Coinbase")}
         for lbl in self.status_labels.values():
             self.statusBar().addPermanentWidget(lbl)
@@ -71,6 +86,7 @@ class MainWindow(QMainWindow):
         self.service = QuoteService(self)
         self.service.quotes.connect(self._on_quotes)
         self.service.status.connect(lambda name, text: self.status_labels[name].setText(text))
+        self.service.market.connect(self._on_market)
         self._reload()
         key, secret = settings.load_keys()
         self.service.start(key, secret, self.prefs.feed, self.prefs.interval)
@@ -78,7 +94,16 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.model.tick)
         self.timer.start(300)
+        self.market_timer = QTimer(self)                 # session can change between clock polls
+        self.market_timer.timeout.connect(self._show_market)
+        self.market_timer.start(15000)
+        self._show_market()
         self._apply_on_top()
+
+        self.updater = _UpdateChecker(self)
+        self.updater.done.connect(self._on_update_check)
+        if self.prefs.check_updates:
+            QTimer.singleShot(3000, lambda: self.updater.start(False))
 
     # ---- actions ----
     def _build_actions(self) -> None:
@@ -94,12 +119,94 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         self._action("Settings", QKeySequence.Preferences, self.open_settings, tb)
 
-    def _action(self, text, shortcut, slot, toolbar) -> QAction:
+    def _action(self, text, shortcut, slot, toolbar=None) -> QAction:
         a = QAction(text, self)
-        a.setShortcut(shortcut)
+        if shortcut is not None:
+            a.setShortcut(shortcut)
         a.triggered.connect(slot)
-        toolbar.addAction(a)
+        if toolbar is not None:
+            toolbar.addAction(a)
         return a
+
+    def _build_menus(self) -> None:
+        f = self.menuBar().addMenu("&File")
+        f.addAction(self._action("Export watchlist…", QKeySequence("Ctrl+E"), self.export_watchlist))
+        f.addAction(self._action("Import watchlist…", QKeySequence("Ctrl+I"), self.import_watchlist))
+        f.addSeparator()
+        f.addAction(self._action("Open data folder", None, self.open_data_folder))
+        f.addSeparator()
+        f.addAction(self._action("Quit", QKeySequence.Quit, self.close))
+        h = self.menuBar().addMenu("&Help")
+        h.addAction(self._action("Check for updates…", None, lambda: self.updater.start(True)))
+        h.addAction(self._action("About Argus Ticker", None, self.about))
+
+    # ---- file / help ----
+    def export_watchlist(self) -> None:
+        name = f"argus-ticker-watchlist-{datetime.now():%Y-%m-%d}.json"
+        path, _ = QFileDialog.getSaveFileName(self, "Export watchlist", str(Path.home() / name),
+                                              "JSON (*.json);;CSV for Excel (*.csv)")
+        if path:
+            try:
+                transfer.export_entries(self.store.list(), path)
+            except OSError as e:
+                QMessageBox.critical(self, "Export", f"Couldn't write the file: {e}")
+                return
+            self.statusBar().showMessage(f"Exported {len(self.model.entries)} entries to {path}", 8000)
+
+    def import_watchlist(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import watchlist", str(Path.home()),
+                                              "Watchlist (*.json *.csv)")
+        if not path:
+            return
+        try:
+            entries, problems = transfer.read_entries(path)
+        except Exception as e:                           # noqa: BLE001 — bad JSON/CSV, unreadable file
+            QMessageBox.critical(self, "Import", f"Couldn't read the file: {e}")
+            return
+        added, skipped = transfer.import_entries(self.store, entries)
+        self._reload()
+        lines = [f"Added {added} entr{'y' if added == 1 else 'ies'}."]
+        if skipped:
+            lines.append(f"Already in the list (skipped): {', '.join(skipped)}")
+        if problems:
+            lines.append("Not imported:\n" + "\n".join(problems[:15]) + ("\n…" if len(problems) > 15 else ""))
+        QMessageBox.information(self, "Import", "\n\n".join(lines))
+
+    def open_data_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(default_path().parent)))
+
+    def about(self) -> None:
+        QMessageBox.about(self, "About Argus Ticker",
+                          f"<b>Argus Ticker {__version__}</b><br><br>"
+                          "Crypto: Coinbase (live). Stocks: Alpaca (your keys).<br>"
+                          f"Watchlist: {default_path()}<br><br>"
+                          f'<a href="{updates.RELEASES_PAGE}">Releases</a>')
+
+    def _on_update_check(self, info, manual: bool) -> None:
+        if info is None:
+            if manual:
+                QMessageBox.information(self, "Updates", "Couldn't check for updates (offline, or the "
+                                        f"releases page isn't public).\n\n{updates.RELEASES_PAGE}")
+        elif info.newer:
+            if QMessageBox.question(self, "Update available",
+                                    f"Argus Ticker {info.latest} is available (you have {__version__}).\n\n"
+                                    "Open the download page? Your watchlist and settings are kept "
+                                    "when you replace the app.") == QMessageBox.Yes:
+                QDesktopServices.openUrl(QUrl(info.url))
+        elif manual:
+            QMessageBox.information(self, "Updates", f"You have the latest version ({__version__}).")
+
+    # ---- market session ----
+    def _on_market(self, m) -> None:
+        self.market = m
+        self._show_market()
+
+    def _show_market(self) -> None:
+        session = self.market.session(datetime.now(market.ET))
+        self.market_label.setText(self.market.label())
+        color = "#16a34a" if session == market.OPEN else "#d97706" if session in (market.PRE, market.POST) else "#808080"
+        self.market_label.setStyleSheet(f"color: {color}; font-weight: 600; padding: 0 6px;")
+        self.model.set_stocks_live(session == market.OPEN)
 
     def _context_menu(self, pos) -> None:
         menu = QMenu(self)

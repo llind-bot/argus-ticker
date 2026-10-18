@@ -23,6 +23,7 @@ FLUSH_SECONDS = 0.25
 class QuoteService(QObject):
     quotes = Signal(list)            # list[Quote]
     status = Signal(str, str)        # provider name, text
+    market = Signal(object)          # market.Market
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -67,7 +68,7 @@ class QuoteService(QObject):
         if STOCK in self._tasks:
             self._tasks.pop(STOCK).cancel()
         self._providers[STOCK] = ap = AlpacaProvider(self._emit, lambda t: self.status.emit("Alpaca", t),
-                                                     key, secret, feed, interval)
+                                                     key, secret, feed, interval, self.market.emit)
         ap.set_symbols(self._symbols[STOCK])
         self._tasks[STOCK] = self._loop.create_task(ap.run())
 

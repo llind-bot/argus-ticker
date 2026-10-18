@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import sys
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from .db import Store, default_path
+from .db import NewerDatabase, Store, default_path
 from .ui.main_window import MainWindow
 
 
@@ -16,7 +16,11 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName("Argus")
     app.setApplicationName("ArgusTicker")
-    store = Store(default_path())
+    try:
+        store = Store(default_path())
+    except NewerDatabase as e:
+        QMessageBox.critical(None, "Argus Ticker", str(e))
+        return 1
     win = MainWindow(store)
     win.show()
     try:

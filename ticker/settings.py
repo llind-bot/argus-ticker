@@ -23,13 +23,15 @@ class Prefs:
     feed: str = "iex"
     interval: float = 5.0
     always_on_top: bool = False
+    check_updates: bool = True
 
 
 def load_prefs() -> Prefs:
     s = QSettings()
     return Prefs(feed=str(s.value("alpaca/feed", "iex")),
                  interval=float(s.value("alpaca/interval", 5.0)),
-                 always_on_top=s.value("ui/always_on_top", False, type=bool))
+                 always_on_top=s.value("ui/always_on_top", False, type=bool),
+                 check_updates=s.value("app/check_updates", True, type=bool))
 
 
 def save_prefs(p: Prefs) -> None:
@@ -37,6 +39,7 @@ def save_prefs(p: Prefs) -> None:
     s.setValue("alpaca/feed", p.feed)
     s.setValue("alpaca/interval", p.interval)
     s.setValue("ui/always_on_top", p.always_on_top)
+    s.setValue("app/check_updates", p.check_updates)
 
 
 def _keyring():

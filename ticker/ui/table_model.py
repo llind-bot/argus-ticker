@@ -9,13 +9,15 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QBrush, QColor, QFont
 
 from .. import format as fmt
-from ..models import CRYPTO, Entry, Quote
+from ..models import CRYPTO, STOCK, Entry, Quote
 
 COLUMNS = ["Symbol", "Name", "Price", "Change", "Change %", "Bid", "Ask", "Updated"]
 NUMERIC = {2, 3, 4, 5, 6, 7}
 FLASH_SECONDS = 0.8
 UP, DOWN = QColor(22, 163, 74), QColor(220, 38, 38)
 UP_BG, DOWN_BG = QColor(22, 163, 74, 70), QColor(220, 38, 38, 70)
+GREY = QColor(128, 128, 128)
+UP_DIM, DOWN_DIM = QColor(22, 163, 74, 140), QColor(220, 38, 38, 140)
 
 
 class WatchlistModel(QAbstractTableModel):
@@ -24,6 +26,7 @@ class WatchlistModel(QAbstractTableModel):
         self.entries: list[Entry] = []
         self.quotes: dict[tuple[str, str], Quote] = {}
         self._flash: dict[tuple[str, str], tuple[float, int]] = {}   # key → (until, +1/-1)
+        self.stocks_live = True                                       # False: market closed → grey stock rows
         self._bold = QFont()
         self._bold.setBold(True)
 
@@ -54,6 +57,11 @@ class WatchlistModel(QAbstractTableModel):
     def _refresh_all(self) -> None:
         if self.entries:
             self.dataChanged.emit(self.index(0, 0), self.index(len(self.entries) - 1, len(COLUMNS) - 1))
+
+    def set_stocks_live(self, live: bool) -> None:
+        if live != self.stocks_live:
+            self.stocks_live = live
+            self._refresh_all()
 
     def entry_at(self, row: int) -> Optional[Entry]:
         return self.entries[row] if 0 <= row < len(self.entries) else None
@@ -88,8 +96,11 @@ class WatchlistModel(QAbstractTableModel):
             return self._text(e, q, col)
         if role == Qt.TextAlignmentRole:
             return int((Qt.AlignRight if col in NUMERIC else Qt.AlignLeft) | Qt.AlignVCenter)
-        if role == Qt.ForegroundRole and q and col in (3, 4) and q.change:
-            return QBrush(UP if q.change > 0 else DOWN)
+        if role == Qt.ForegroundRole:
+            dim = e.kind == STOCK and not self.stocks_live
+            if q and col in (3, 4) and q.change:
+                return QBrush((UP_DIM if dim else UP) if q.change > 0 else (DOWN_DIM if dim else DOWN))
+            return QBrush(GREY) if dim else None
         if role == Qt.BackgroundRole and col == 2:
             flash = self._flash.get((e.symbol, e.kind))
             if flash:

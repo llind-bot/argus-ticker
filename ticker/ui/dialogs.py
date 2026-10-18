@@ -127,6 +127,8 @@ class SettingsDialog(QDialog):
         self.interval.setValue(prefs.interval)
         self.on_top = QCheckBox("Keep window on top")
         self.on_top.setChecked(prefs.always_on_top)
+        self.updates = QCheckBox("Check for updates at startup")
+        self.updates.setChecked(prefs.check_updates)
 
         if settings.keys_from_env():
             note = "Using ALPACA_API_KEY / ALPACA_SECRET_KEY from the environment."
@@ -143,6 +145,7 @@ class SettingsDialog(QDialog):
         form.addRow("Stock data feed", self.feed)
         form.addRow("Stock refresh", self.interval)
         form.addRow("", self.on_top)
+        form.addRow("", self.updates)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -167,6 +170,7 @@ class SettingsDialog(QDialog):
         except Exception as e:                           # noqa: BLE001
             QMessageBox.critical(self, "Alpaca keys", f"Couldn't save the keys: {e}")
             return
-        self.prefs = settings.Prefs(self.feed.currentData(), self.interval.value(), self.on_top.isChecked())
+        self.prefs = settings.Prefs(self.feed.currentData(), self.interval.value(), self.on_top.isChecked(),
+                                    self.updates.isChecked())
         settings.save_prefs(self.prefs)
         self.accept()
