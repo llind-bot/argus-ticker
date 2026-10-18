@@ -6,7 +6,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QFont, QPainter
 from PySide6.QtWidgets import QScrollArea, QWidget
 
-from ..models import CRYPTO, STOCK
+from .. import market
+from ..models import CRYPTO, METAL, STOCK
 from . import theme
 from .state import LiveState, Row
 
@@ -87,7 +88,8 @@ class CardsView(_Canvas):
         p.setOpacity(1.0 if row.live else 0.62)
         theme.rounded(p, r.adjusted(0.5, 0.5, -0.5, -0.5), 12, theme.PANEL, theme.BORDER)
         x, w = r.left() + 16, r.width() - 32
-        tag = "CRYPTO" if row.entry.kind == CRYPTO else ("STOCK" if row.live else "CLOSED")
+        tag = "CRYPTO" if row.entry.kind == CRYPTO else (("METAL" if row.entry.kind == METAL else "STOCK")
+                                                          if row.live else "CLOSED")
         theme.text(p, QRectF(x, r.top() + 12, w, 20), tag, theme.sans(10, QFont.DemiBold), theme.MUTED,
                    Qt.AlignRight | Qt.AlignVCenter)
         sym_font = theme.sans(15, QFont.DemiBold)
@@ -122,9 +124,12 @@ class ListView(_Canvas):
     def _groups(self) -> list[tuple[str, object, list[Row]]]:
         s = self.state
         out = []
-        crypto, stocks = s.rows(CRYPTO), s.rows(STOCK)
+        crypto, metals, stocks = s.rows(CRYPTO), s.rows(METAL), s.rows(STOCK)
         if crypto:
             out.append(("CRYPTO · LIVE", s.up_color, crypto))
+        if metals:
+            out.append((f"METALS · SPOT · {market.metals_label().replace('Metals ', '').upper()}",
+                        s.up_color if s.metals_live else theme.CLOSED, metals))
         if stocks:
             out.append((f"STOCKS · {s.market_label().upper()}", s.market_color(), stocks))
         return out
@@ -155,7 +160,8 @@ class ListView(_Canvas):
         theme.text(p, QRectF(r.left(), r.top() + 10, name_w, 22), row.symbol, theme.sans(15, QFont.DemiBold),
                    theme.TEXT if row.live else theme.SOFT)
         theme.text(p, QRectF(r.left(), r.top() + 31, name_w, 18),
-                   theme.elided(p, row.name or ("Crypto" if row.entry.kind == CRYPTO else "Stock"), theme.sans(12), name_w),
+                   theme.elided(p, row.name or {CRYPTO: "Crypto", METAL: "Spot · per oz"}.get(row.entry.kind, "Stock"),
+                                theme.sans(12), name_w),
                    theme.sans(12), theme.MUTED)
         pill = QRectF(r.right() - pill_w, r.center().y() - 14, pill_w, 28)
         price = QRectF(pill.left() - gap - price_w, r.top(), price_w, r.height())

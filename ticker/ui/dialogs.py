@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QVBoxLayout)
 
 from .. import settings
-from ..models import CRYPTO, STOCK, Entry, normalize, valid_format
+from ..models import CRYPTO, METAL, METALS, STOCK, Entry, normalize, valid_format
 from ..providers import alpaca, coinbase
 
 
@@ -31,6 +31,7 @@ class EntryDialog(QDialog):
         self.kind = QComboBox()
         self.kind.addItem("Stock (Alpaca)", STOCK)
         self.kind.addItem("Crypto (Coinbase)", CRYPTO)
+        self.kind.addItem("Metal (spot, USD per oz)", METAL)
         self.symbol = QLineEdit()
         self.name = QLineEdit()
         self.above = QLineEdit()
@@ -65,14 +66,16 @@ class EntryDialog(QDialog):
         self.result_entry: Optional[Entry] = None
 
     def _hint(self) -> None:
-        self.symbol.setPlaceholderText("e.g. AAPL" if self.kind.currentData() == STOCK else "e.g. BTC or ETH-USD")
+        self.symbol.setPlaceholderText({STOCK: "e.g. AAPL", CRYPTO: "e.g. BTC or ETH-USD",
+                                        METAL: "gold, silver, platinum, palladium (or XAU, XAG…)"}[self.kind.currentData()])
 
     def _save(self) -> None:
         kind = self.kind.currentData()
         sym = normalize(self.symbol.text(), kind)
         if not valid_format(sym, kind):
-            QMessageBox.warning(self, "Symbol", f"“{self.symbol.text().strip()}” doesn't look like a "
-                                f"{'stock symbol' if kind == STOCK else 'crypto pair (e.g. BTC-USD)'}.")
+            what = {STOCK: "stock symbol", CRYPTO: "crypto pair (e.g. BTC-USD)",
+                    METAL: "metal — use gold, silver, platinum or palladium"}[kind]
+            QMessageBox.warning(self, "Symbol", f"“{self.symbol.text().strip()}” doesn't look like a {what}.")
             return
         try:
             above, below = _opt_float(self.above.text()), _opt_float(self.below.text())
@@ -83,12 +86,15 @@ class EntryDialog(QDialog):
         if changed and not self._check(sym, kind):
             return
         e = self._entry or Entry(None, sym, kind)
-        self.result_entry = Entry(e.id, sym, kind, self.name.text().strip(), self.notes.toPlainText().strip(),
+        name = self.name.text().strip() or (METALS[sym] if kind == METAL else "")
+        self.result_entry = Entry(e.id, sym, kind, name, self.notes.toPlainText().strip(),
                                   above, below, e.sort)
         self.accept()
 
     def _check(self, sym: str, kind: str) -> bool:
         """True to save. Unknown symbol → stop; can't reach the provider → ask."""
+        if kind == METAL:
+            return True                                   # fixed list, already checked
         key, secret = self._keys()
         if kind == STOCK and not (key and secret):
             return True                                   # can't check without keys

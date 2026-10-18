@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS entries (
     sort INTEGER NOT NULL DEFAULT 0,
     UNIQUE (symbol, kind));
 """,
+    # 2 (0.5.0): the app's own spot-metal readings, one per symbol per 5 minutes — the
+    # metals feed has no history, so daily change and trend lines come from these.
+    """
+CREATE TABLE IF NOT EXISTS metal_ticks (
+    symbol TEXT NOT NULL,
+    bucket INTEGER NOT NULL,
+    ts REAL NOT NULL,
+    price REAL NOT NULL,
+    PRIMARY KEY (symbol, bucket));
+""",
 ]
 _COLS = "id, symbol, kind, name, notes, alert_above, alert_below, sort"
 
@@ -80,7 +90,8 @@ def _migrate(conn: sqlite3.Connection, migrations: list[str]) -> int:
 
 class Store:
     def __init__(self, path: Path | str):
-        self.conn = sqlite3.connect(str(path))
+        self.path = str(path)
+        self.conn = sqlite3.connect(self.path)
         migrate(self.conn)
 
     def close(self) -> None:

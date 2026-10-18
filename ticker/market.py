@@ -102,3 +102,59 @@ def estimate(now: Optional[datetime] = None) -> Market:
     pre = datetime.combine(t.date(), PRE_START, ET) if today[0] else None
     post = datetime.combine(t.date(), POST_END, ET) if today[0] else None
     return Market(is_open, session(d)[0], nxt_close, today[0], today[1], pre, post, estimated=True)
+
+
+# ---- spot metals: Sun 6 PM → Fri 5 PM ET, daily break 5–6 PM ET (holidays not modelled) ----
+METAL_CLOSE, METAL_OPEN = time(17, 0), time(18, 0)
+
+
+def metals_open(now: Optional[datetime] = None) -> bool:
+    t = (now or datetime.now(ET)).astimezone(ET)
+    wd, tm = t.weekday(), t.time()                 # Mon=0 … Sun=6
+    if wd == 5:
+        return False
+    if wd == 6:
+        return tm >= METAL_OPEN
+    if wd == 4:
+        return tm < METAL_CLOSE
+    return not (METAL_CLOSE <= tm < METAL_OPEN)
+
+
+def last_metal_close(now: datetime) -> datetime:
+    """Most recent daily close (5 PM ET, Mon–Fri) at or before ``now``."""
+    from datetime import timedelta
+    t = now.astimezone(ET)
+    d = t.date()
+    while True:
+        c = datetime.combine(d, METAL_CLOSE, ET)
+        if d.weekday() < 5 and c <= t:
+            return c
+        d -= timedelta(days=1)
+
+
+def metal_reference_close(now: Optional[datetime] = None) -> datetime:
+    """Close the daily change is measured from: the previous session's close while trading,
+    the one before the latest close while closed (weekend, daily break)."""
+    from datetime import timedelta
+    t = (now or datetime.now(ET)).astimezone(ET)
+    last = last_metal_close(t)
+    return last if metals_open(t) else last_metal_close(last - timedelta(seconds=1))
+
+
+def next_metal_open(now: Optional[datetime] = None) -> datetime:
+    from datetime import timedelta
+    t = (now or datetime.now(ET)).astimezone(ET)
+    d = t.date()
+    for _ in range(8):
+        o = datetime.combine(d, METAL_OPEN, ET)
+        if d.weekday() in (6, 0, 1, 2, 3) and o > t:
+            return o
+        d += timedelta(days=1)
+    raise RuntimeError("no metals open found")
+
+
+def metals_label(now: Optional[datetime] = None) -> str:
+    now = now or datetime.now(ET)
+    if metals_open(now):
+        return "Metals open"
+    return f"Metals closed · opens {_when(next_metal_open(now), now)}"

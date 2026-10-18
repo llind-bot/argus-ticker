@@ -15,10 +15,11 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from .models import CRYPTO, STOCK, Entry, Quote
+from .models import CRYPTO, METAL, STOCK, Entry, Quote
 from .providers import alpaca, coinbase
 from .providers.alpaca import AlpacaProvider
 from .providers.coinbase import CoinbaseProvider
+from .providers.metals import MetalsProvider
 
 FLUSH_SECONDS = 0.25
 HISTORY_SECONDS = 300               # trend lines: refetch every 5 minutes
@@ -31,14 +32,15 @@ class QuoteService(QObject):
     market = Signal(object)          # market.Market
     history = Signal(object)         # dict: (symbol, kind) → closes, oldest first
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: Optional[QObject] = None, db_path: Optional[str] = None):
         super().__init__(parent)
+        self._db_path = db_path
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="quotes", daemon=True)
         self._pending: dict[tuple[str, str], Quote] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._providers: dict[str, object] = {}
-        self._symbols = {STOCK: set(), CRYPTO: set()}
+        self._symbols = {STOCK: set(), CRYPTO: set(), METAL: set()}
         self._history_wake: Optional[asyncio.Event] = None
 
     # ---- called from the GUI thread ----
@@ -55,7 +57,8 @@ class QuoteService(QObject):
     def set_watchlist(self, entries: list[Entry]) -> None:
         stocks = {e.symbol for e in entries if e.kind == STOCK}
         crypto = {e.symbol for e in entries if e.kind == CRYPTO}
-        self._call(self._set_symbols, stocks, crypto)
+        metals = {e.symbol for e in entries if e.kind == METAL}
+        self._call(self._set_symbols, stocks, crypto, metals)
 
     def configure_alpaca(self, key: Optional[str], secret: Optional[str], feed: str, interval: float) -> None:
         self._call(self._start_alpaca, key, secret, feed, interval)
@@ -68,6 +71,11 @@ class QuoteService(QObject):
         self._providers[CRYPTO] = cb = CoinbaseProvider(self._emit, lambda t: self.status.emit("Coinbase", t))
         cb.set_symbols(self._symbols[CRYPTO])
         self._tasks[CRYPTO] = self._loop.create_task(cb.run())
+        if self._db_path:
+            self._providers[METAL] = mp = MetalsProvider(self._emit, lambda t: self.status.emit("Metals", t),
+                                                         self._db_path, history=self.history.emit)
+            mp.set_symbols(self._symbols[METAL])
+            self._tasks[METAL] = self._loop.create_task(mp.run())
         self._start_alpaca(key, secret, feed, interval)
         self._tasks["flush"] = self._loop.create_task(self._flusher())
         self._history_wake = asyncio.Event()
@@ -83,9 +91,9 @@ class QuoteService(QObject):
         if self._history_wake:
             self._history_wake.set()
 
-    def _set_symbols(self, stocks: set[str], crypto: set[str]) -> None:
+    def _set_symbols(self, stocks: set[str], crypto: set[str], metals: set[str] = frozenset()) -> None:
         added = (stocks - self._symbols[STOCK]) | (crypto - self._symbols[CRYPTO])
-        self._symbols = {STOCK: stocks, CRYPTO: crypto}
+        self._symbols = {STOCK: stocks, CRYPTO: crypto, METAL: set(metals)}
         if added and self._history_wake:
             self._history_wake.set()
         for kind, p in self._providers.items():

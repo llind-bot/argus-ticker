@@ -9,6 +9,12 @@ as a single Windows `.exe` (it also runs on macOS/Linux from source).
   every 5 s by default. Change is since the previous close. Stocks are polled
   instead of streamed because an Alpaca account gets a single stock stream,
   which another program (e.g. a trading bot) may already be using.
+- **Metals:** spot gold, silver, platinum and palladium in USD per troy ounce
+  from Swissquote's public price feed (add a *Metal* entry: "gold", "silver",
+  "XAU"…). Metals trade Sun 6 PM – Fri 5 PM ET with a daily break 5–6 PM. The
+  feed has no history, so the app saves its own readings (one per 5 minutes,
+  8 days) and shows the daily change once it has seen a 5 PM close, and the
+  trend line from what it has recorded — both fill in the longer it runs.
 - **Four live views** (pick one from the top bar, View menu or tray icon; the
   app remembers it):
   - **Cards** — a tile per asset: big price, change, 24 h / last-session trend line.
@@ -106,6 +112,7 @@ python -m pytest -q
 | `ticker/selfupdate.py` | Download, verify and swap in a new exe |
 | `ticker/providers/coinbase.py` | Coinbase WebSocket + REST |
 | `ticker/providers/alpaca.py` | Alpaca snapshot polling |
+| `ticker/providers/metals.py` | Swissquote spot metals + recorded readings |
 | `ticker/quotes.py` | Runs providers on a background asyncio loop, batches updates to the UI |
 | `ticker/ui/state.py` | Shared live state the views draw from |
 | `ticker/ui/live_views.py` | Cards and List views (painted) |

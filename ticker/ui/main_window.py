@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
             o.open_main.connect(self._show_main)
             o.switch_to.connect(self.set_view)
         self._build_menus()
-        self.status_labels = {name: QLabel(f"{name}: idle") for name in ("Alpaca", "Coinbase")}
+        self.status_labels = {name: QLabel(f"{name}: idle") for name in ("Alpaca", "Coinbase", "Metals")}
         for lbl in self.status_labels.values():
             self.statusBar().addPermanentWidget(lbl)
 
@@ -159,7 +159,7 @@ class MainWindow(QMainWindow):
             self._tray_menu = menu
             self.tray.show()
 
-        self.service = QuoteService(self)
+        self.service = QuoteService(self, store.path)
         self.service.quotes.connect(self._on_quotes)
         self.service.status.connect(lambda name, text: self.status_labels[name].setText(text))
         self.service.market.connect(self._on_market)

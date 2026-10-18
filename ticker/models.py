@@ -6,15 +6,17 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-STOCK, CRYPTO = "stock", "crypto"
-KINDS = (STOCK, CRYPTO)
+STOCK, CRYPTO, METAL = "stock", "crypto", "metal"
+KINDS = (STOCK, CRYPTO, METAL)
+METALS = {"XAU": "Gold", "XAG": "Silver", "XPT": "Platinum", "XPD": "Palladium"}   # spot, USD per troy oz
+_METAL_WORDS = {v.upper(): k for k, v in METALS.items()}
 
 
 @dataclass
 class Entry:
     id: Optional[int]
     symbol: str
-    kind: str                         # STOCK or CRYPTO
+    kind: str                         # STOCK, CRYPTO or METAL
     name: str = ""
     notes: str = ""
     alert_above: Optional[float] = None
@@ -46,10 +48,13 @@ _CRYPTO_RE = re.compile(r"^[A-Z0-9]{2,10}-[A-Z]{3,5}$")
 
 
 def normalize(symbol: str, kind: str) -> str:
-    """User input → provider symbol: ' aapl ' → AAPL; btc, btc/usd, btcusd → BTC-USD."""
+    """User input → provider symbol: ' aapl ' → AAPL; btc, btc/usd, btcusd → BTC-USD; gold, xau/usd → XAU."""
     s = symbol.strip().upper().replace(" ", "")
     if kind == STOCK:
         return s
+    if kind == METAL:
+        s = s.replace("/USD", "").replace("-USD", "").replace("USD", "") if s not in _METAL_WORDS else s
+        return _METAL_WORDS.get(s, s)
     s = s.replace("/", "-").replace("_", "-")
     if "-" not in s:
         for quote in ("USDC", "USDT", "USD", "EUR", "GBP"):
@@ -60,4 +65,6 @@ def normalize(symbol: str, kind: str) -> str:
 
 
 def valid_format(symbol: str, kind: str) -> bool:
+    if kind == METAL:
+        return symbol in METALS
     return bool((_STOCK_RE if kind == STOCK else _CRYPTO_RE).match(symbol))

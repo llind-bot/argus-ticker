@@ -9,7 +9,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QBrush, QColor, QFont
 
 from .. import format as fmt
-from ..models import CRYPTO, STOCK, Entry, Quote
+from ..models import CRYPTO, METAL, STOCK, Entry, Quote
 
 COLUMNS = ["Symbol", "Name", "Price", "Change", "Change %", "Bid", "Ask", "Updated"]
 NUMERIC = {2, 3, 4, 5, 6, 7}
@@ -108,7 +108,8 @@ class WatchlistModel(QAbstractTableModel):
         if role == Qt.FontRole and col in (0, 2):
             return self._bold
         if role == Qt.ToolTipRole:
-            tip = f"{e.symbol} ({'crypto · Coinbase' if e.kind == CRYPTO else 'stock · Alpaca'})"
+            source = {CRYPTO: "crypto · Coinbase", METAL: "spot metal, USD/oz · Swissquote"}.get(e.kind, "stock · Alpaca")
+            tip = f"{e.symbol} ({source})"
             alerts = [f"alert above {fmt.price(e.alert_above)}" if e.alert_above is not None else "",
                       f"alert below {fmt.price(e.alert_below)}" if e.alert_below is not None else ""]
             extra = [x for x in alerts + [e.notes] if x]

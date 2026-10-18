@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor
 
 from .. import format as fmt
 from .. import market
-from ..models import CRYPTO, STOCK, Entry, Quote
+from ..models import CRYPTO, METAL, METALS, STOCK, Entry, Quote
 from . import theme
 
 FLASH_SECONDS = 0.8
@@ -45,6 +45,7 @@ class LiveState(QObject):
         self.history: dict[tuple[str, str], list[float]] = {}
         self.market = market.estimate()
         self.session = self.market.session(market.datetime.now(market.ET))
+        self.metals_live = market.metals_open()
         self.scheme = "green-red"
         self._flash: dict[tuple[str, str], tuple[float, int]] = {}
 
@@ -87,6 +88,7 @@ class LiveState(QObject):
 
     def refresh_session(self) -> None:
         self.session = self.market.session(market.datetime.now(market.ET))
+        self.metals_live = market.metals_open()
         self.changed.emit()
 
     def set_scheme(self, scheme: str) -> None:
@@ -120,8 +122,9 @@ class LiveState(QObject):
         if q and points:
             points.append(q.price)                        # line ends at the live price
         flash = self._flash.get(key)
-        short = e.symbol.split("-")[0] if e.kind == CRYPTO else e.symbol
+        short = {CRYPTO: e.symbol.split("-")[0], METAL: METALS.get(e.symbol, e.symbol)}.get(e.kind, e.symbol)
+        live = {STOCK: self.stocks_live, METAL: self.metals_live}.get(e.kind, True)
         return Row(e, e.symbol, short, e.name, fmt.price(q.price) if q else "…",
                    fmt.change(q.change, q.price) if q else "", fmt.pct(q.change_pct) if q else "",
-                   up, color, e.kind != STOCK or self.stocks_live, points,
+                   up, color, live, points,
                    flash[1] if flash and flash[0] > time.monotonic() else 0, q is not None)
