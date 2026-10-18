@@ -25,6 +25,8 @@ class Prefs:
     always_on_top: bool = False
     check_updates: bool = True
     scheme: str = "green-red"           # up/down colors (ui.theme.SCHEMES)
+    alert_snooze_min: int = 15          # default snooze when an alert is acknowledged
+    alert_popup: bool = True            # open the alert window when an alert fires
 
 
 def load_prefs() -> Prefs:
@@ -33,7 +35,9 @@ def load_prefs() -> Prefs:
                  interval=float(s.value("alpaca/interval", 5.0)),
                  always_on_top=s.value("ui/always_on_top", False, type=bool),
                  check_updates=s.value("app/check_updates", True, type=bool),
-                 scheme=str(s.value("ui/scheme", "green-red")))
+                 scheme=str(s.value("ui/scheme", "green-red")),
+                 alert_snooze_min=int(s.value("alerts/snooze_min", 15)),
+                 alert_popup=s.value("alerts/popup", True, type=bool))
 
 
 def save_prefs(p: Prefs) -> None:
@@ -43,6 +47,8 @@ def save_prefs(p: Prefs) -> None:
     s.setValue("ui/always_on_top", p.always_on_top)
     s.setValue("app/check_updates", p.check_updates)
     s.setValue("ui/scheme", p.scheme)
+    s.setValue("alerts/snooze_min", p.alert_snooze_min)
+    s.setValue("alerts/popup", p.alert_popup)
 
 
 def _keyring():

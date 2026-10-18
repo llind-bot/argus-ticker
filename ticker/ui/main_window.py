@@ -18,6 +18,7 @@ from ..db import DuplicateEntry, Store, default_path
 from ..format import AlertTracker
 from ..quotes import QuoteService
 from . import theme
+from .alerts import AlertsWindow
 from .dialogs import EntryDialog, SettingsDialog
 from .live_views import CardsView, ListView, scrolling
 from .overlays import FloatingWidget, TickerStrip
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow):
         self.store = store
         self.prefs = settings.load_prefs()
         self.alerts = AlertTracker()
+        self.alerts_win = None
         self.setWindowTitle(f"Argus Ticker {__version__}")
         self.market = market.estimate()
         self.setWindowIcon(app_icon())
@@ -148,8 +150,10 @@ class MainWindow(QMainWindow):
         if self.tray:
             self.tray.setToolTip("Argus Ticker")
             self.tray.activated.connect(self._tray_activated)
+            self.tray.messageClicked.connect(self.show_alerts)
             menu = QMenu()
             menu.addAction("Open watchlist", self._show_main)
+            menu.addAction("Alerts…", self.show_alerts)
             menu.addSeparator()
             for v in ("cards", "list", "widget", "strip"):
                 menu.addAction(VIEW_LABELS[v], lambda v=v: self.set_view(v))
@@ -311,6 +315,7 @@ class MainWindow(QMainWindow):
         v.addAction(self._action("Floating widget", QKeySequence("Ctrl+4"), lambda: self.set_view("widget")))
         v.addAction(self._action("Ticker strip", QKeySequence("Ctrl+5"), lambda: self.set_view("strip")))
         v.addSeparator()
+        v.addAction(self._action("Alerts…", QKeySequence("Ctrl+L"), self.show_alerts))
         v.addAction(self._action("Settings…", None, self.open_settings))
         h = self.menuBar().addMenu("&Help")
         h.addAction(self._action("Check for updates…", None, lambda: self.updater.start(True)))
@@ -526,13 +531,48 @@ class MainWindow(QMainWindow):
         self.model.update_quotes(quotes)
         self.state.update_quotes(quotes)
         by_key = {(q.symbol, q.kind): q for q in quotes}
+        new = []
         for e in self.model.entries:
             q = by_key.get((e.symbol, e.kind))
             if q:
-                for msg in self.alerts.check(e, q.price):
-                    self.statusBar().showMessage(msg, 15000)
-                    if self.tray:
-                        self.tray.showMessage("Price alert", msg, QSystemTrayIcon.Information, 10000)
+                new.extend(self.alerts.check(e, q.price))
+        for a in new:                                     # each alert notifies once; repeats wait for you
+            self.statusBar().showMessage(a.text(), 15000)
+            if self.tray:
+                self.tray.showMessage("Price alert", a.text() + "\nClick to snooze or turn it off.",
+                                      QSystemTrayIcon.Information, 10000)
+        if new and self.prefs.alert_popup:
+            self.show_alerts()
+        elif self.alerts_win and self.alerts_win.isVisible():
+            self.alerts_win.refresh()
+
+    # ---- alerts ----
+    def show_alerts(self) -> None:
+        if self.alerts_win is None:
+            self.alerts_win = AlertsWindow(self, self.alerts, self.turn_off_alert,
+                                           lambda: self.prefs.alert_snooze_min)
+        self.alerts_win.refresh()
+        if not self.alerts.pending:
+            self.statusBar().showMessage("No alerts waiting.", 5000)
+            return
+        self.alerts_win.show()
+        self.alerts_win.raise_()
+        self.alerts_win.activateWindow()
+
+    def turn_off_alert(self, key) -> None:
+        """Clear that alert level on the entry (saved), and drop the waiting alert."""
+        entry_id, side = key
+        e = self.store.get(entry_id)
+        self.alerts.pending.pop(key, None)
+        if e is None:
+            return
+        if side == "above":
+            e.alert_above = None
+        else:
+            e.alert_below = None
+        self.store.update(e)
+        self._reload(entry_id)
+        self.statusBar().showMessage(f"Alert {side} turned off for {e.symbol}.", 8000)
 
     def closeEvent(self, event) -> None:
         if self.widget_win.isVisible() or self.strip_win.isVisible():

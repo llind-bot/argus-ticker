@@ -7,7 +7,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                               QFormLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+                               QFormLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QSpinBox,
                                QVBoxLayout)
 
 from .. import settings
@@ -140,6 +140,13 @@ class SettingsDialog(QDialog):
         self.scheme.setCurrentIndex(max(0, self.scheme.findData(prefs.scheme)))
         self.updates = QCheckBox("Check for updates at startup")
         self.updates.setChecked(prefs.check_updates)
+        self.snooze = QSpinBox()
+        self.snooze.setRange(1, 1440)
+        self.snooze.setSuffix(" min")
+        self.snooze.setValue(prefs.alert_snooze_min)
+        self.snooze.setToolTip("How long an acknowledged alert stays quiet (the alert window can pick another time)")
+        self.popup = QCheckBox("Open the alert window when an alert fires")
+        self.popup.setChecked(prefs.alert_popup)
 
         if settings.keys_from_env():
             note = "Using ALPACA_API_KEY / ALPACA_SECRET_KEY from the environment."
@@ -158,6 +165,8 @@ class SettingsDialog(QDialog):
         form.addRow("Up / down colors", self.scheme)
         form.addRow("", self.on_top)
         form.addRow("", self.updates)
+        form.addRow("Snooze alerts for", self.snooze)
+        form.addRow("", self.popup)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -183,6 +192,7 @@ class SettingsDialog(QDialog):
             QMessageBox.critical(self, "Alpaca keys", f"Couldn't save the keys: {e}")
             return
         self.prefs = settings.Prefs(self.feed.currentData(), self.interval.value(), self.on_top.isChecked(),
-                                    self.updates.isChecked(), self.scheme.currentData())
+                                    self.updates.isChecked(), self.scheme.currentData(),
+                                    self.snooze.value(), self.popup.isChecked())
         settings.save_prefs(self.prefs)
         self.accept()

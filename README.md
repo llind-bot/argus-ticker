@@ -30,8 +30,15 @@ as a single Windows `.exe` (it also runs on macOS/Linux from source).
   (Alpaca 15-minute bars), refreshed every 5 minutes. Settings → *Up / down
   colors* offers green/red or blue/orange.
 - **Watchlist (Edit view):** add, edit, delete and reorder entries. Each entry can have a
-  name, notes and price alerts (above / below), which pop up a Windows
-  notification once per crossing.
+  name, notes and price alerts (above / below).
+- **Alerts that don't nag:** when a price reaches an alert level you get one
+  Windows notification and the *Price alerts* window (View → Alerts…, Ctrl+L,
+  or click the notification). The alert then waits for you: however much the
+  price bounces around the level, there are no more pop-ups. In the window:
+  **Snooze** (5 min – 1 day; afterwards it alerts again if the price is still
+  past the level) or **Turn off alert** (clears that level on the asset).
+  Closing the window snoozes everything for the default time — Settings →
+  *Snooze alerts for* (15 min) and *Open the alert window when an alert fires*.
 
 ## Run from source
 
