@@ -7,6 +7,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from . import selfupdate
 from .db import NewerDatabase, Store, default_path
 from .ui import theme
 from .ui.main_window import MainWindow
@@ -14,6 +15,7 @@ from .ui.main_window import MainWindow
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    selfupdate.cleanup_old()                          # previous version left by an update
     app = QApplication(sys.argv)
     app.setOrganizationName("Argus")
     app.setApplicationName("ArgusTicker")

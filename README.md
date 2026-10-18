@@ -53,11 +53,15 @@ The watchlist lives in `%APPDATA%\ArgusTicker\ticker.db`
 
 ## Download and update
 
-Get `ArgusTicker.exe` from the repo's **Releases** page. To update, close the
-app and replace the exe with the new one — the watchlist, settings and keys are
-stored outside the exe and are kept. With *Check for updates at startup* on
-(Settings), the app says when a newer release exists (only possible while the
-releases are publicly visible; Help → Check for updates tells you if it can't look).
+Get `ArgusTicker.exe` from the repo's **Releases** page and run it from a
+folder you own (Desktop, Documents, …) so it can update itself.
+
+**Updates:** at startup (Settings → *Check for updates at startup*) or from
+Help → Check for updates, the app looks for a newer release. **Download and
+install** fetches the new exe, checks it against the release's SHA-256
+checksum, swaps it in and restarts — the watchlist, settings and keys live
+outside the exe and are kept. You can also update by hand: close the app and
+replace the exe.
 
 ## Releasing a new version
 
@@ -65,7 +69,8 @@ releases are publicly visible; Help → Check for updates tells you if it can't 
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
 
 The tag build runs the tests, checks the tag matches `__version__`, builds the
-exe and publishes it as a GitHub Release. Pushes to `main` also build the exe
+exe and publishes it with its `ArgusTicker.exe.sha256` as a GitHub Release —
+installed apps offer it on their next update check. Pushes to `main` also build the exe
 (Actions → Windows build → artifact *ArgusTicker-windows*).
 
 ### Changing the database
@@ -98,6 +103,7 @@ python -m pytest -q
 | `ticker/transfer.py` | Export / import (JSON, CSV) |
 | `ticker/market.py` | Market session from Alpaca's clock and calendar |
 | `ticker/updates.py` | Update check against GitHub Releases |
+| `ticker/selfupdate.py` | Download, verify and swap in a new exe |
 | `ticker/providers/coinbase.py` | Coinbase WebSocket + REST |
 | `ticker/providers/alpaca.py` | Alpaca snapshot polling |
 | `ticker/quotes.py` | Runs providers on a background asyncio loop, batches updates to the UI |

@@ -10,10 +10,10 @@ from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QPainter,
                            QPixmap)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QFileDialog, QHBoxLayout,
-                               QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
+                               QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
                                QStackedWidget, QSystemTrayIcon, QTableView, QToolBar, QVBoxLayout, QWidget)
 
-from .. import __version__, market, settings, transfer, updates
+from .. import __version__, market, selfupdate, settings, transfer, updates
 from ..db import DuplicateEntry, Store, default_path
 from ..format import AlertTracker
 from ..quotes import QuoteService
@@ -59,6 +59,30 @@ class _UpdateChecker(QObject):
 
     def start(self, manual: bool) -> None:
         threading.Thread(target=lambda: self.done.emit(updates.check(), manual), daemon=True).start()
+
+
+class _Installer(QObject):
+    """Runs selfupdate.install on a thread; reports progress and the result to the GUI."""
+    progress = Signal(int, int)
+    done = Signal(object)                        # None on success, else the error text
+
+    def __init__(self, info, parent=None):
+        super().__init__(parent)
+        self.info = info
+        self.cancelled = False
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        def report(done: int, total: int) -> bool:
+            self.progress.emit(done, total)
+            return not self.cancelled
+        try:
+            selfupdate.install(self.info.exe_url, report, self.info.sha256, self.info.sha_url)
+            self.done.emit(None)
+        except Exception as e:                   # noqa: BLE001 — shown to the user
+            self.done.emit(str(e))
 
 
 class MainWindow(QMainWindow):
@@ -340,13 +364,68 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Updates", "Couldn't check for updates (offline, or the "
                                         f"releases page isn't public).\n\n{updates.RELEASES_PAGE}")
         elif info.newer:
-            if QMessageBox.question(self, "Update available",
-                                    f"Argus Ticker {info.latest} is available (you have {__version__}).\n\n"
-                                    "Open the download page? Your watchlist and settings are kept "
-                                    "when you replace the app.") == QMessageBox.Yes:
-                QDesktopServices.openUrl(QUrl(info.url))
+            self._offer_update(info)
         elif manual:
             QMessageBox.information(self, "Updates", f"You have the latest version ({__version__}).")
+
+    def _offer_update(self, info) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("Update available")
+        box.setIcon(QMessageBox.Information)
+        box.setText(f"<b>Argus Ticker {info.latest}</b> is available (you have {__version__}).")
+        box.setInformativeText("Your watchlist, settings and keys are kept.")
+        install = None
+        if selfupdate.can_self_update() and info.installable:
+            install = box.addButton("Download and install", QMessageBox.AcceptRole)
+        page = box.addButton("What's new / download page", QMessageBox.HelpRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.setDefaultButton(install or page)
+        box.exec()
+        if box.clickedButton() is install and install is not None:
+            self._install_update(info)
+        elif box.clickedButton() is page:
+            QDesktopServices.openUrl(QUrl(info.url))
+
+    def _install_update(self, info) -> None:
+        self._show_main()
+        dlg = QProgressDialog(f"Downloading Argus Ticker {info.latest}…", "Cancel", 0, 100, self)
+        dlg.setWindowTitle("Updating")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        job = _Installer(info, self)
+        self._installer = job
+
+        def progress(done: int, total: int) -> None:
+            if total:
+                dlg.setMaximum(100)
+                dlg.setValue(int(done * 100 / total))
+            else:
+                dlg.setMaximum(0)                # unknown size: busy indicator
+            dlg.setLabelText(f"Downloading Argus Ticker {info.latest}… {done / 1e6:.1f} MB")
+
+        def finished(error) -> None:
+            dlg.close()
+            self._installer = None
+            if error:
+                if not job.cancelled:
+                    QMessageBox.warning(self, "Update", f"The update wasn't installed:\n\n{error}\n\n"
+                                        f"You can download it by hand from\n{info.url}")
+                return
+            QMessageBox.information(self, "Update", f"Argus Ticker {info.latest} is installed. "
+                                    "The app will now restart.")
+            try:
+                selfupdate.relaunch(selfupdate.current_exe())
+            except Exception as e:               # noqa: BLE001
+                QMessageBox.warning(self, "Update", f"Installed, but couldn't restart automatically ({e}). "
+                                    "Please start Argus Ticker again.")
+            self.quit_app()
+
+        job.progress.connect(progress)
+        job.done.connect(finished)
+        dlg.canceled.connect(lambda: setattr(job, "cancelled", True))
+        job.start()
 
     # ---- market session ----
     def _on_market(self, m) -> None:

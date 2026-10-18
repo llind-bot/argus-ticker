@@ -43,4 +43,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/ArgusTicker.exe --title "Argus Ticker ${GITHUB_REF_NAME#v}" --generate-notes
+        run: |
+          cd dist
+          sha256sum ArgusTicker.exe > ArgusTicker.exe.sha256
+          cat ArgusTicker.exe.sha256
+          gh release create "$GITHUB_REF_NAME" ArgusTicker.exe ArgusTicker.exe.sha256 \
+            --title "Argus Ticker ${GITHUB_REF_NAME#v}" --generate-notes
