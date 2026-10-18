@@ -24,6 +24,7 @@ class Prefs:
     interval: float = 5.0
     always_on_top: bool = False
     check_updates: bool = True
+    scheme: str = "green-red"           # up/down colors (ui.theme.SCHEMES)
 
 
 def load_prefs() -> Prefs:
@@ -31,7 +32,8 @@ def load_prefs() -> Prefs:
     return Prefs(feed=str(s.value("alpaca/feed", "iex")),
                  interval=float(s.value("alpaca/interval", 5.0)),
                  always_on_top=s.value("ui/always_on_top", False, type=bool),
-                 check_updates=s.value("app/check_updates", True, type=bool))
+                 check_updates=s.value("app/check_updates", True, type=bool),
+                 scheme=str(s.value("ui/scheme", "green-red")))
 
 
 def save_prefs(p: Prefs) -> None:
@@ -40,6 +42,7 @@ def save_prefs(p: Prefs) -> None:
     s.setValue("alpaca/interval", p.interval)
     s.setValue("ui/always_on_top", p.always_on_top)
     s.setValue("app/check_updates", p.check_updates)
+    s.setValue("ui/scheme", p.scheme)
 
 
 def _keyring():

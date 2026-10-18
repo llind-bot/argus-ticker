@@ -8,6 +8,7 @@ import sys
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .db import NewerDatabase, Store, default_path
+from .ui import theme
 from .ui.main_window import MainWindow
 
 
@@ -16,13 +17,15 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName("Argus")
     app.setApplicationName("ArgusTicker")
+    app.setQuitOnLastWindowClosed(False)              # the widget/strip can run without the main window
+    theme.apply_dark_palette(app)
     try:
         store = Store(default_path())
     except NewerDatabase as e:
         QMessageBox.critical(None, "Argus Ticker", str(e))
         return 1
     win = MainWindow(store)
-    win.show()
+    win.start_ui()
     try:
         return app.exec()
     finally:

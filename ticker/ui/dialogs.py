@@ -127,6 +127,11 @@ class SettingsDialog(QDialog):
         self.interval.setValue(prefs.interval)
         self.on_top = QCheckBox("Keep window on top")
         self.on_top.setChecked(prefs.always_on_top)
+        from . import theme
+        self.scheme = QComboBox()
+        for key, label in theme.SCHEME_LABELS.items():
+            self.scheme.addItem(label, key)
+        self.scheme.setCurrentIndex(max(0, self.scheme.findData(prefs.scheme)))
         self.updates = QCheckBox("Check for updates at startup")
         self.updates.setChecked(prefs.check_updates)
 
@@ -144,6 +149,7 @@ class SettingsDialog(QDialog):
         form.addRow("", QLabel(note))
         form.addRow("Stock data feed", self.feed)
         form.addRow("Stock refresh", self.interval)
+        form.addRow("Up / down colors", self.scheme)
         form.addRow("", self.on_top)
         form.addRow("", self.updates)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -171,6 +177,6 @@ class SettingsDialog(QDialog):
             QMessageBox.critical(self, "Alpaca keys", f"Couldn't save the keys: {e}")
             return
         self.prefs = settings.Prefs(self.feed.currentData(), self.interval.value(), self.on_top.isChecked(),
-                                    self.updates.isChecked())
+                                    self.updates.isChecked(), self.scheme.currentData())
         settings.save_prefs(self.prefs)
         self.accept()

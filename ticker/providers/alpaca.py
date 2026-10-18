@@ -39,6 +39,35 @@ def parse_snapshots(data: dict) -> list[Quote]:
     return out
 
 
+def parse_bars(bars_by_symbol: dict) -> dict[str, list[float]]:
+    """15-minute bars → closes of each symbol's most recent regular session (9:30–16:00 ET)."""
+    out = {}
+    for sym, bars in (bars_by_symbol or {}).items():
+        sessions: dict = {}
+        for b in bars or []:
+            t = mkt.datetime.fromtimestamp(parse_time(b.get("t")), mkt.ET)
+            if mkt.time(9, 30) <= t.time() < mkt.time(16, 0) and as_float(b.get("c")) is not None:
+                sessions.setdefault(t.date(), []).append((t, float(b["c"])))
+        if sessions:
+            out[sym] = [c for _, c in sorted(sessions[max(sessions)])]
+    return out
+
+
+def fetch_history(symbols: list[str], key: str, secret: str, feed: str, now: float) -> dict[str, list[float]]:
+    """Last regular session's 15-minute closes per symbol (blocking; one request per page)."""
+    start = mkt.datetime.fromtimestamp(now - 6 * 86400, mkt.ET).date().isoformat()
+    params = {"symbols": ",".join(sorted(symbols)), "timeframe": "15Min", "start": f"{start}T00:00:00Z",
+              "limit": 10000, "feed": feed, "sort": "asc"}
+    merged: dict[str, list] = {}
+    while True:
+        data = http_get_json(f"{DATA_URL}/bars?" + urllib.parse.urlencode(params), _headers(key, secret), 15)
+        for sym, bars in (data.get("bars") or {}).items():
+            merged.setdefault(sym, []).extend(bars or [])
+        if not data.get("next_page_token"):
+            return parse_bars(merged)
+        params["page_token"] = data["next_page_token"]
+
+
 def _headers(key: str, secret: str) -> dict:
     return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 

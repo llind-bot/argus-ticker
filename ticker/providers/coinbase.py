@@ -108,3 +108,14 @@ class CoinbaseProvider:
                 self._ws = None
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
+
+
+def parse_candles(candles: list, now: float, hours: float = 24) -> list[float]:
+    """Coinbase candles ([time, low, high, open, close, volume], newest first) → closes, oldest first."""
+    rows = sorted((c for c in candles or [] if len(c) >= 5 and c[0] >= now - hours * 3600), key=lambda c: c[0])
+    return [float(c[4]) for c in rows]
+
+
+def fetch_history(product: str, now: float) -> list[float]:
+    """Last 24 h of 15-minute closes (blocking)."""
+    return parse_candles(http_get_json(f"{REST_URL}/products/{product}/candles?granularity=900", timeout=10), now)

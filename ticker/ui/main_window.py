@@ -6,17 +6,35 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHeaderView, QLabel, QMainWindow,
-                               QMenu, QMessageBox, QSystemTrayIcon, QTableView, QToolBar)
+from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QPainter,
+                           QPixmap)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QFileDialog, QHBoxLayout,
+                               QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
+                               QStackedWidget, QSystemTrayIcon, QTableView, QToolBar, QVBoxLayout, QWidget)
 
 from .. import __version__, market, settings, transfer, updates
 from ..db import DuplicateEntry, Store, default_path
 from ..format import AlertTracker
 from ..quotes import QuoteService
+from . import theme
 from .dialogs import EntryDialog, SettingsDialog
+from .live_views import CardsView, ListView, scrolling
+from .overlays import FloatingWidget, TickerStrip
+from .state import LiveState
 from .table_model import WatchlistModel
+
+MAIN_VIEWS = ("cards", "list", "edit")
+VIEW_LABELS = {"cards": "Cards", "list": "List", "edit": "Edit", "widget": "Floating widget",
+               "strip": "Ticker strip"}
+
+_SEG_CSS = """
+QPushButton { font-size: 12px; border: 0; border-radius: 6px; padding: 6px 14px; background: transparent;
+              color: #8B98A5; }
+QPushButton:checked { background: #243041; color: #E6EDF3; }
+QPushButton:hover:!checked { color: #E6EDF3; }
+"""
+_BAR_CSS = "#topbar { background: #0B0F14; border-bottom: 1px solid #1C2430; }"
 
 
 def app_icon() -> QIcon:
@@ -54,6 +72,8 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(820, 420)
 
+        self.state = LiveState(self)
+        self.state.scheme = self.prefs.scheme
         self.model = WatchlistModel(self)
         self.table = QTableView()
         self.table.setModel(self.model)
@@ -67,12 +87,35 @@ class MainWindow(QMainWindow):
         self.table.doubleClicked.connect(lambda _: self.edit_entry())
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
-        self.setCentralWidget(self.table)
 
-        self._build_actions()
+        self.cards = CardsView(self.state)
+        self.list_view = ListView(self.state)
+        for v in (self.cards, self.list_view):
+            v.activated.connect(self._edit_by_id)
+        edit_page = QWidget()
+        edit_lay = QVBoxLayout(edit_page)
+        edit_lay.setContentsMargins(0, 0, 0, 0)
+        edit_lay.setSpacing(0)
+        edit_lay.addWidget(self._build_actions())
+        edit_lay.addWidget(self.table)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(scrolling(self.cards))
+        self.stack.addWidget(scrolling(self.list_view))
+        self.stack.addWidget(edit_page)
+        central = QWidget()
+        lay = QVBoxLayout(central)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._build_topbar())
+        lay.addWidget(self.stack)
+        self.setCentralWidget(central)
+
+        self.widget_win = FloatingWidget(self.state)
+        self.strip_win = TickerStrip(self.state)
+        for o in (self.widget_win, self.strip_win):
+            o.open_main.connect(self._show_main)
+            o.switch_to.connect(self.set_view)
         self._build_menus()
-        self.market_label = QLabel()
-        self.statusBar().addWidget(self.market_label)
         self.status_labels = {name: QLabel(f"{name}: idle") for name in ("Alpaca", "Coinbase")}
         for lbl in self.status_labels.values():
             self.statusBar().addPermanentWidget(lbl)
@@ -80,19 +123,30 @@ class MainWindow(QMainWindow):
         self.tray = QSystemTrayIcon(app_icon(), self) if QSystemTrayIcon.isSystemTrayAvailable() else None
         if self.tray:
             self.tray.setToolTip("Argus Ticker")
-            self.tray.activated.connect(lambda *_: (self.showNormal(), self.activateWindow()))
+            self.tray.activated.connect(self._tray_activated)
+            menu = QMenu()
+            menu.addAction("Open watchlist", self._show_main)
+            menu.addSeparator()
+            for v in ("cards", "list", "widget", "strip"):
+                menu.addAction(VIEW_LABELS[v], lambda v=v: self.set_view(v))
+            menu.addSeparator()
+            menu.addAction("Quit", self.quit_app)
+            self.tray.setContextMenu(menu)
+            self._tray_menu = menu
             self.tray.show()
 
         self.service = QuoteService(self)
         self.service.quotes.connect(self._on_quotes)
         self.service.status.connect(lambda name, text: self.status_labels[name].setText(text))
         self.service.market.connect(self._on_market)
+        self.service.history.connect(self.state.set_history)
         self._reload()
         key, secret = settings.load_keys()
         self.service.start(key, secret, self.prefs.feed, self.prefs.interval)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.model.tick)
+        self.timer.timeout.connect(self.state.tick)
         self.timer.start(300)
         self.market_timer = QTimer(self)                 # session can change between clock polls
         self.market_timer.timeout.connect(self._show_market)
@@ -105,11 +159,95 @@ class MainWindow(QMainWindow):
         if self.prefs.check_updates:
             QTimer.singleShot(3000, lambda: self.updater.start(False))
 
+    # ---- views ----
+    def _build_topbar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("topbar")
+        bar.setAttribute(Qt.WA_StyledBackground)
+        bar.setStyleSheet(_BAR_CSS)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(20, 10, 16, 10)
+        h.setSpacing(14)
+        title = QLabel("Argus Ticker")
+        title.setFont(theme.sans(15, theme.QFont.DemiBold))
+        h.addWidget(title)
+        self.market_pill = QLabel()
+        self.market_pill.setFont(theme.sans(12))
+        h.addWidget(self.market_pill)
+        h.addStretch(1)
+        seg = QWidget()
+        seg.setStyleSheet("QWidget#seg { background: #121821; border-radius: 8px; }" + _SEG_CSS)
+        seg.setObjectName("seg")
+        seg.setAttribute(Qt.WA_StyledBackground)
+        sl = QHBoxLayout(seg)
+        sl.setContentsMargins(3, 3, 3, 3)
+        sl.setSpacing(2)
+        self.view_buttons = QButtonGroup(self)
+        for v in MAIN_VIEWS:
+            b = QPushButton(VIEW_LABELS[v])
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, v=v: self.set_view(v))
+            self.view_buttons.addButton(b)
+            sl.addWidget(b)
+            setattr(self, f"btn_{v}", b)
+        h.addWidget(seg)
+        for v in ("widget", "strip"):
+            b = QPushButton(VIEW_LABELS[v])
+            b.setToolTip(f"Show the {VIEW_LABELS[v].lower()} (always on top)")
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("QPushButton { font-size: 12px; border: 1px solid #243041; border-radius: 6px; "
+                            "padding: 6px 12px; background: transparent; color: #A7B3BF; } "
+                            "QPushButton:hover { color: #E6EDF3; border-color: #3A4A5E; }")
+            b.clicked.connect(lambda _=False, v=v: self.set_view(v))
+            h.addWidget(b)
+        return bar
+
+    def start_ui(self) -> None:
+        """Show the view the user had last (main window, widget or strip)."""
+        view = str(QSettings().value("ui/view", "list"))
+        self.set_view(view if view in VIEW_LABELS else "list")
+
+    def set_view(self, view: str) -> None:
+        QSettings().setValue("ui/view", view)
+        if view in MAIN_VIEWS:
+            self.stack.setCurrentIndex(MAIN_VIEWS.index(view))
+            getattr(self, f"btn_{view}").setChecked(True)
+            QSettings().setValue("ui/main_view", view)
+            for a in self.view_actions.actions():
+                a.setChecked(a.data() == view)
+            self._show_main(keep_view=True)
+            return
+        (self.strip_win if view == "widget" else self.widget_win).hide()
+        win = self.widget_win if view == "widget" else self.strip_win
+        if view == "strip":
+            self.strip_win.place()
+        win.show()
+        win.raise_()
+        self.hide()
+
+    def _show_main(self, keep_view: bool = False) -> None:
+        if not keep_view:
+            v = str(QSettings().value("ui/main_view", "list"))
+            self.stack.setCurrentIndex(MAIN_VIEWS.index(v if v in MAIN_VIEWS else "list"))
+            getattr(self, f"btn_{v if v in MAIN_VIEWS else 'list'}").setChecked(True)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._show_main()
+
+    def _edit_by_id(self, entry_id: int) -> None:
+        self.set_view("edit")
+        self._select(entry_id)
+        self.edit_entry()
+
     # ---- actions ----
-    def _build_actions(self) -> None:
-        tb = QToolBar("Main")
+    def _build_actions(self) -> QToolBar:
+        tb = QToolBar("Edit")
         tb.setMovable(False)
-        self.addToolBar(tb)
         self.act_add = self._action("Add", QKeySequence.New, self.add_entry, tb)
         self.act_edit = self._action("Edit", QKeySequence(Qt.Key_Return), self.edit_entry, tb)
         self.act_delete = self._action("Delete", QKeySequence.Delete, self.delete_entry, tb)
@@ -118,6 +256,7 @@ class MainWindow(QMainWindow):
         self.act_down = self._action("Move down", QKeySequence("Ctrl+Down"), lambda: self.move_entry(1), tb)
         tb.addSeparator()
         self._action("Settings", QKeySequence.Preferences, self.open_settings, tb)
+        return tb
 
     def _action(self, text, shortcut, slot, toolbar=None) -> QAction:
         a = QAction(text, self)
@@ -135,7 +274,20 @@ class MainWindow(QMainWindow):
         f.addSeparator()
         f.addAction(self._action("Open data folder", None, self.open_data_folder))
         f.addSeparator()
-        f.addAction(self._action("Quit", QKeySequence.Quit, self.close))
+        f.addAction(self._action("Quit", QKeySequence.Quit, self.quit_app))
+        v = self.menuBar().addMenu("&View")
+        self.view_actions = QActionGroup(self)
+        for key, shortcut in (("cards", "Ctrl+1"), ("list", "Ctrl+2"), ("edit", "Ctrl+3")):
+            a = self._action(VIEW_LABELS[key], QKeySequence(shortcut), lambda _=False, k=key: self.set_view(k))
+            a.setCheckable(True)
+            a.setData(key)
+            self.view_actions.addAction(a)
+            v.addAction(a)
+        v.addSeparator()
+        v.addAction(self._action("Floating widget", QKeySequence("Ctrl+4"), lambda: self.set_view("widget")))
+        v.addAction(self._action("Ticker strip", QKeySequence("Ctrl+5"), lambda: self.set_view("strip")))
+        v.addSeparator()
+        v.addAction(self._action("Settings…", None, self.open_settings))
         h = self.menuBar().addMenu("&Help")
         h.addAction(self._action("Check for updates…", None, lambda: self.updater.start(True)))
         h.addAction(self._action("About Argus Ticker", None, self.about))
@@ -199,14 +351,16 @@ class MainWindow(QMainWindow):
     # ---- market session ----
     def _on_market(self, m) -> None:
         self.market = m
+        self.state.set_market(m)
         self._show_market()
 
     def _show_market(self) -> None:
         session = self.market.session(datetime.now(market.ET))
-        self.market_label.setText(self.market.label())
-        color = "#16a34a" if session == market.OPEN else "#d97706" if session in (market.PRE, market.POST) else "#808080"
-        self.market_label.setStyleSheet(f"color: {color}; font-weight: 600; padding: 0 6px;")
         self.model.set_stocks_live(session == market.OPEN)
+        self.state.refresh_session()
+        self.market_pill.setText(f"●  {self.market.label()}")
+        self.market_pill.setStyleSheet(f"color: {self.state.market_color().name()}; background: #161D27; "
+                                       "border-radius: 10px; padding: 3px 10px;")
 
     def _context_menu(self, pos) -> None:
         menu = QMenu(self)
@@ -229,6 +383,7 @@ class MainWindow(QMainWindow):
     def _reload(self, select_id=None) -> None:
         entries = self.store.list()
         self.model.set_entries(entries)
+        self.state.set_entries(entries)
         self.service.set_watchlist(entries)
         if select_id is not None:
             self._select(select_id)
@@ -278,6 +433,7 @@ class MainWindow(QMainWindow):
             if dlg.keys_changed or (old.feed, old.interval) != (self.prefs.feed, self.prefs.interval):
                 key, secret = settings.load_keys()
                 self.service.configure_alpaca(key, secret, self.prefs.feed, self.prefs.interval)
+            self.state.set_scheme(self.prefs.scheme)
             self._apply_on_top()
 
     def _apply_on_top(self) -> None:
@@ -289,6 +445,7 @@ class MainWindow(QMainWindow):
     # ---- quotes ----
     def _on_quotes(self, quotes) -> None:
         self.model.update_quotes(quotes)
+        self.state.update_quotes(quotes)
         by_key = {(q.symbol, q.kind): q for q in quotes}
         for e in self.model.entries:
             q = by_key.get((e.symbol, e.kind))
@@ -299,7 +456,19 @@ class MainWindow(QMainWindow):
                         self.tray.showMessage("Price alert", msg, QSystemTrayIcon.Information, 10000)
 
     def closeEvent(self, event) -> None:
+        if self.widget_win.isVisible() or self.strip_win.isVisible():
+            self.hide()                                   # an overlay keeps the app running
+            event.ignore()
+            return
+        self.quit_app()
+
+    def quit_app(self) -> None:
+        if getattr(self, "_quitting", False):
+            return
+        self._quitting = True
         self.service.stop()
+        for w in (self.widget_win, self.strip_win):
+            w.close()
         if self.tray:
             self.tray.hide()
-        super().closeEvent(event)
+        QApplication.quit()
